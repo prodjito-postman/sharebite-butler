@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=https://astropods.ai/schema/package.json
+spec: package/v1
+name: sharebite-butler
+
+agent:
+  build:
+    context: .
+    dockerfile: Dockerfile
+  inputs:
+    - name: SHAREBITE_SESSION_COOKIE
+      datatype: string
+      secret: true
+      description: |
+        Sharebite `sessionid` cookie from your authenticated browser session
+        (Chrome DevTools → Application → Cookies → postman.sharebite.com).
+        Lasts hours-to-a-day; refresh when the agent starts returning 401.
+    - name: SHAREBITE_CSRF_TOKEN
+      datatype: string
+      secret: true
+      description: |
+        Sharebite `csrftoken` cookie (alongside sessionid in DevTools →
+        Cookies). Required for endpoints behind Django CSRF middleware —
+        currently only order cancellation. Long-lived (Django default 1y);
+        rotates rarely. Refresh whenever you see a 403 with the message
+        "CSRF check failed".
+
+models:
+  anthropic:
+    provider: anthropic
+
+knowledge:
+  cache:
+    provider: redis
+
+ingestion:
+  schedule:
+    container:
+      build:
+        context: .
+        dockerfile: ingestion/schedule/Dockerfile
+    inputs:
+      - name: SHAREBITE_SESSION_COOKIE
+        datatype: string
+        secret: true
+        description: |
+          Sharebite `sessionid` cookie from your authenticated browser session
+          (Chrome DevTools → Application → Cookies → postman.sharebite.com).
+          Lasts hours-to-a-day; refresh when ingestion starts returning 401.
+    trigger:
+      type: schedule
+  manual:
+    container:
+      build:
+        context: .
+        dockerfile: ingestion/manual/Dockerfile
+    inputs:
+      - name: SHAREBITE_SESSION_COOKIE
+        datatype: string
+        secret: true
+        description: |
+          Sharebite `sessionid` cookie from your authenticated browser session
+          (Chrome DevTools → Application → Cookies → postman.sharebite.com).
+          Lasts hours-to-a-day; refresh when ingestion starts returning 401.
+    trigger:
+      type: manual
+
+dev:
+  interfaces:
+    messaging:
+      adapters: [web]

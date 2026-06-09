@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "outDir": "./dist"
+  },
+  "include": ["agent/**/*", "ingestion/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

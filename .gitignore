@@ -1,0 +1,38 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Astro
+.ast/
+
+# Dependencies
+node_modules/
+
+# Build
+dist/
+
+# IDE
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Bun
+bun.lockb
+
+# Local scratch (HAR captures, etc — may contain session cookies)
+.scratch/
+**/.scratch/
+
+# Local sqlite cache (menus, agent memory)
+.cache/
