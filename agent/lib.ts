@@ -17,6 +17,7 @@ import { Store, type DayPlanRecord } from '../ingestion/lib/store.ts';
 // Note: Sharebite is the source of truth for placed orders (queried via
 // listPlacedOrdersFromSharebite). No local audit log is maintained.
 import { SharebiteClient, type OrderItemInput } from '../ingestion/lib/sharebite.ts';
+import { ingestUpcoming } from '../ingestion/lib/ingest.ts';
 
 const MEMORY_DB_PATH = resolve(process.cwd(), '.cache', 'memory.db');
 
@@ -57,16 +58,27 @@ and — when the user asks — actually place the order on their behalf.
 ## Tools
 
 Recommendation (read-only):
-  - \`get_menu_for_date(date)\` — returns the cached menu for that lunch date:
-    the day's allowance, both restaurants with their menu items, and the
-    user's previous orders at each restaurant. Each item has a
-    \`choice_exist\` flag indicating whether it has modifiers.
+  - \`get_menu_for_date(date)\` — returns the menu plan for that lunch
+    date: the day's allowance, both restaurants with their menu items,
+    and the user's previous orders at each restaurant. Each item has a
+    \`choice_exist\` flag indicating whether it has modifiers. If the
+    date isn't cached yet, this tool will transparently pull it from
+    Sharebite and cache it before returning (one-shot — you don't need
+    to call ingest_menu_for_date first).
   - \`list_available_menu_dates()\` — returns the list of dates whose menu
-    data has been cached.
+    data has been cached AND the upcoming dates Sharebite has group
+    orders for. If a date you want is in \`upcoming_uncached_dates\`,
+    just call \`get_menu_for_date\` on it — the fetch happens
+    automatically.
   - \`get_item_modifiers(date, restaurant_id, item_id)\` — fetches the
     MenuChoice/Option list for an item. Call this ONLY when you intend to
     add modifiers to an item you're ordering, or to check whether a
     \`choice_exist:true\` item has REQUIRED modifiers (min_choices > 0).
+  - \`ingest_menu_for_date(date)\` — force a fresh pull from Sharebite
+    for that date (e.g. the user mentions the menu changed since
+    last ingestion). \`get_menu_for_date\` already auto-ingests on
+    cache miss, so reach for this tool only when you specifically
+    want to bypass the cache.
 
 Ordering:
   - \`dry_run_order(date, restaurant_id, items)\` — calls Sharebite's price
@@ -181,41 +193,67 @@ order summaries, confirmations, all of it.
 // Read-only menu tools (existing).
 // ---------------------------------------------------------------------------
 
+function serializePlan(plan: DayPlanRecord) {
+  return {
+    found: true as const,
+    date: plan.date,
+    budget_usd: plan.budget,
+    restaurants: plan.payload.restaurants.map((r) => ({
+      id: r.id,
+      name: r.name,
+      rating: r.rating,
+      cuisines: r.cuisines,
+      menu: r.menu_sections.map((s) => ({
+        section: s.name,
+        items: s.items.map((i) => ({
+          id: i.id,
+          title: i.title,
+          price: i.price,
+          about: i.about,
+          dietary_tags: i.dietary_tags,
+          most_ordered: i.most_ordered,
+          choice_exist: i.choice_exist,
+        })),
+      })),
+      your_past_orders_here: r.previous_orders,
+    })),
+  };
+}
+
 export const getMenuForDateTool = createTool({
   id: 'get_menu_for_date',
   description:
-    "Returns the cached Sharebite menu plan for a given lunch date: the day's allowance, both restaurants with their menu sections and items (title, description, price, dietary tags, choice_exist), and the user's previous orders at each restaurant. Returns `{ found: false }` if no menu has been cached for that date.",
+    "Returns the Sharebite menu plan for a given lunch date: the day's allowance, both restaurants with their menu sections and items (title, description, price, dietary tags, choice_exist), and the user's previous orders at each restaurant. If the date isn't cached, this tool transparently runs ingestion against Sharebite to fetch and cache it, then returns the plan. Returns `{ found: false }` only when the date isn't among Sharebite's upcoming group orders.",
   inputSchema: z.object({
     date: z.string().describe('Lunch date in YYYY-MM-DD format'),
   }),
   execute: async (input) => {
     const store = new Store();
     try {
-      const plan = await store.getDayPlan(input.date);
-      if (!plan) return { found: false, date: input.date };
+      let plan = await store.getDayPlan(input.date);
+      if (plan) return serializePlan(plan);
+
+      // Cache miss — pull from Sharebite. This is the "agent self-heals
+      // when manual/scheduled ingestion hasn't run" path.
+      const ingest = await ingestUpcoming({ onlyDate: input.date, store });
+      plan = await store.getDayPlan(input.date);
+      if (plan) return serializePlan(plan);
+
+      const failed = ingest.failed_dates.find((f) => f.date === input.date);
+      if (failed) {
+        return {
+          found: false,
+          date: input.date,
+          ingestion_attempted: true,
+          error: `Ingestion failed for ${input.date}: ${failed.error}`,
+        };
+      }
       return {
-        found: true,
-        date: plan.date,
-        budget_usd: plan.budget,
-        restaurants: plan.payload.restaurants.map((r) => ({
-          id: r.id,
-          name: r.name,
-          rating: r.rating,
-          cuisines: r.cuisines,
-          menu: r.menu_sections.map((s) => ({
-            section: s.name,
-            items: s.items.map((i) => ({
-              id: i.id,
-              title: i.title,
-              price: i.price,
-              about: i.about,
-              dietary_tags: i.dietary_tags,
-              most_ordered: i.most_ordered,
-              choice_exist: i.choice_exist,
-            })),
-          })),
-          your_past_orders_here: r.previous_orders,
-        })),
+        found: false,
+        date: input.date,
+        ingestion_attempted: true,
+        upcoming_dates: ingest.upcoming_dates,
+        error: `${input.date} is not among Sharebite's upcoming group orders. Available: ${ingest.upcoming_dates.join(', ') || '(none)'}.`,
       };
     } finally {
       store.close();
@@ -226,16 +264,61 @@ export const getMenuForDateTool = createTool({
 export const listAvailableMenuDatesTool = createTool({
   id: 'list_available_menu_dates',
   description:
-    'Returns the list of dates (YYYY-MM-DD) for which a Sharebite menu has been cached and is available to recommend on. Sorted ascending. Use this when no specific date was given.',
+    "Returns the dates the agent can recommend on. `cached_dates` are already in the Store and respond instantly. `upcoming_uncached_dates` are dates Sharebite has group orders for but that haven't been ingested yet — calling `get_menu_for_date` on one will trigger ingestion automatically. Use this when no specific date was given.",
   inputSchema: z.object({}),
   execute: async () => {
     const store = new Store();
     try {
       const plans = await store.listDayPlans();
-      return { dates: plans.map((d) => d.date) };
+      const cached = plans.map((d) => d.date);
+
+      let upcoming: string[] = [];
+      try {
+        const client = new SharebiteClient();
+        const groups = await client.getUserGroupOrders();
+        upcoming = groups.map((g) => g.fulfilment_time.split(' ')[0]!).sort();
+      } catch (err) {
+        // Sharebite unreachable / cookie expired — fall back to cache only.
+        return {
+          cached_dates: cached,
+          upcoming_uncached_dates: [],
+          upcoming_lookup_error: String(err),
+        };
+      }
+
+      const cachedSet = new Set(cached);
+      return {
+        cached_dates: cached,
+        upcoming_uncached_dates: upcoming.filter((d) => !cachedSet.has(d)),
+      };
     } finally {
       store.close();
     }
+  },
+});
+
+export const ingestMenuForDateTool = createTool({
+  id: 'ingest_menu_for_date',
+  description:
+    "Force a fresh pull of the Sharebite menu for a given lunch date and overwrite any cached copy. `get_menu_for_date` already auto-ingests on cache miss, so use this tool only when you want to bypass the cache (e.g. user says the menu changed). Returns whether the ingest succeeded and the list of upcoming dates Sharebite knows about.",
+  inputSchema: z.object({
+    date: z.string().describe('Lunch date in YYYY-MM-DD format'),
+  }),
+  execute: async (input) => {
+    const result = await ingestUpcoming({ onlyDate: input.date });
+    if (result.ingested_dates.includes(input.date)) {
+      return { ok: true, date: input.date, upcoming_dates: result.upcoming_dates };
+    }
+    const failed = result.failed_dates.find((f) => f.date === input.date);
+    if (failed) {
+      return { ok: false, date: input.date, error: failed.error };
+    }
+    return {
+      ok: false,
+      date: input.date,
+      error: `${input.date} is not among Sharebite's upcoming group orders. Available: ${result.upcoming_dates.join(', ') || '(none)'}.`,
+      upcoming_dates: result.upcoming_dates,
+    };
   },
 });
 
@@ -622,6 +705,7 @@ export function createAgent() {
       get_menu_for_date: getMenuForDateTool,
       list_available_menu_dates: listAvailableMenuDatesTool,
       get_item_modifiers: getItemModifiersTool,
+      ingest_menu_for_date: ingestMenuForDateTool,
       dry_run_order: dryRunOrderTool,
       place_order: placeOrderTool,
       list_placed_orders: listPlacedOrdersTool,

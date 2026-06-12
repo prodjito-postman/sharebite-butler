@@ -1,21 +1,29 @@
 /**
- * Scheduled ingestion pipeline — stub.
+ * Scheduled ingestion pipeline. Runs on the cron defined by
+ * `INGEST_SCHEDULE` (set at deploy time) and warms the Store with each
+ * weekday's Sharebite menus.
  *
- * Intended to run on the cron defined by `INGEST_SCHEDULE` (set at deploy
- * time) and populate Redis with each weekday's Sharebite menus, same as
- * `bun ingest` does locally via ingestion/manual/index.ts.
- *
- * Not yet wired: extract the shared run() out of ingestion/manual/index.ts
- * into ingestion/lib/ and call it from here. Until then this container
- * builds and exits cleanly without doing work.
+ * The agent will also self-ingest on cache miss, so this cron is
+ * "best effort" — it just keeps recommendations fast by avoiding the
+ * cold-start fetch on the first user request of the day.
  *
  * Environment variables (injected automatically):
  *   SHAREBITE_SESSION_COOKIE - declared as input in astropods.yml
  *   REDIS_HOST / REDIS_PORT  - from `knowledge.cache` in astropods.yml
  */
 
+import { ingestUpcoming } from '../lib/ingest.ts';
+
 async function main() {
-  console.log('[ingest-schedule] stub — no work performed. See JSDoc.');
+  console.log('[ingest-schedule] starting');
+  const result = await ingestUpcoming();
+  console.log(
+    `[ingest-schedule] complete — ingested=${result.ingested_dates.length} failed=${result.failed_dates.length}`,
+  );
+  if (result.failed_dates.length > 0) process.exit(1);
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error('[ingest-schedule] fatal:', err);
+  process.exit(1);
+});
