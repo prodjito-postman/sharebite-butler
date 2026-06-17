@@ -21,6 +21,33 @@ import { ingestUpcoming } from '../ingestion/lib/ingest.ts';
 
 const MEMORY_DB_PATH = resolve(process.cwd(), '.cache', 'memory.db');
 
+/**
+ * The Sharebite office timezone that "today"/"tomorrow" and lunch days are
+ * resolved against. Pinned via SHAREBITE_TIMEZONE because the office calendar
+ * day is independent of where the code runs — on Astro/EKS the container clock
+ * is UTC, and even locally the user may be travelling. Falls back to the
+ * runtime's local zone only for convenience during local dev.
+ */
+export function officeTimezone(): string {
+  return process.env.SHAREBITE_TIMEZONE ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/**
+ * Today's date as a YYYY-MM-DD string in the office timezone.
+ * `Date.toISOString()` returns UTC, which rolls over to tomorrow once local
+ * time is past the UTC offset (e.g. evening in the Americas) — use this so the
+ * weekday and the ISO date always agree on the same office calendar day.
+ */
+export function localToday(now: Date = new Date()): string {
+  // en-CA formats as YYYY-MM-DD.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: officeTimezone(),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
 const PLACE_ORDER_CONFIRMATION_TOKEN = 'place order';
 
 function maxOverageUsd(): number {
@@ -693,10 +720,10 @@ export function createAgent() {
     name: 'Sharebite Butler',
     instructions: () => {
       const now = new Date();
-      const iso = now.toISOString().slice(0, 10);
+      const iso = localToday(now);
       const weekday = now.toLocaleDateString('en-US', {
         weekday: 'long',
-        timeZone: 'America/Los_Angeles',
+        timeZone: officeTimezone(),
       });
       return `Today is ${weekday}, ${iso}. Use this to resolve relative dates like "today", "tomorrow", "next Wednesday" before calling tools.\n\n${AGENT_INSTRUCTIONS}`;
     },

@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import { createAgent } from './lib.ts';
+import { createAgent, localToday } from './lib.ts';
 import { Store, type DayPlanRecord } from '../ingestion/lib/store.ts';
 
 const recommendationSchema = z.object({
@@ -103,7 +103,7 @@ async function main() {
     days = days.filter((d) => d.date === filterDate);
   } else {
     // Hide already-past days (Sharebite's API can return them briefly).
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     days = days.filter((d) => d.date >= today);
   }
 

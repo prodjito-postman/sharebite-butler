@@ -34,6 +34,12 @@ const USER_AGENT =
 export interface ClientOptions {
   sessionId?: string;
   csrfToken?: string;
+  /**
+   * IANA timezone sent to Sharebite to resolve menu windows, delivery cutoffs
+   * and allowance day boundaries. Should match the user's Sharebite office.
+   * Defaults to SHAREBITE_TIMEZONE, then the runtime's local timezone.
+   */
+  timezone?: string;
 }
 
 export interface GeocodedAddress {
@@ -100,6 +106,7 @@ export interface PlaceOrderInput {
 export class SharebiteClient {
   private readonly sessionId: string;
   private readonly csrfToken: string | undefined;
+  private readonly timezone: string;
 
   constructor(opts: ClientOptions = {}) {
     const sessionId = opts.sessionId ?? process.env.SHAREBITE_SESSION_COOKIE;
@@ -116,6 +123,10 @@ export class SharebiteClient {
     // BOTH in the `Cookie` header (as `csrftoken=...`) and the `X-CSRFToken`
     // request header — Django's double-submit cookie check requires both.
     this.csrfToken = opts.csrfToken ?? process.env.SHAREBITE_CSRF_TOKEN;
+    this.timezone =
+      opts.timezone ??
+      process.env.SHAREBITE_TIMEZONE ??
+      Intl.DateTimeFormat().resolvedOptions().timeZone;
   }
 
   async connect(): Promise<void> {
@@ -192,7 +203,7 @@ export class SharebiteClient {
       latitude: args.latitude,
       longitude: args.longitude,
       restaurant_ids: args.restaurantIds.join(','),
-      timezone: 'America/Los_Angeles',
+      timezone: this.timezone,
       restaurant_type: 'GROUP_ORDER',
       group_order_slug: args.groupOrderSlug,
     };
@@ -209,7 +220,7 @@ export class SharebiteClient {
       restaurant_id: String(restaurantId),
       delivery_status: '1',
       future_order_date: futureOrderDate,
-      timezone: 'America/Los_Angeles',
+      timezone: this.timezone,
     });
     const raw = await this.fetchJson(`/api/v1/restaurants/menu/?${qs}`);
     const parsed = MenuResponseSchema.parse(raw);
@@ -218,7 +229,7 @@ export class SharebiteClient {
 
   async getItemDetail(itemId: number, futureOrderDate: string): Promise<ItemDetail> {
     const qs = new URLSearchParams({
-      timezone: 'America/Los_Angeles',
+      timezone: this.timezone,
       future_order_time: futureOrderDate,
     });
     const raw = await this.fetchJson(`/api/v1/restaurants/item_detail/${itemId}?${qs}`);
@@ -246,7 +257,7 @@ export class SharebiteClient {
   }): Promise<AllowanceEntry[]> {
     const qs = new URLSearchParams({
       user_id: String(args.userId),
-      timezone: 'America/Los_Angeles',
+      timezone: this.timezone,
       future_order_date: args.futureOrderDate,
       group_order: args.groupOrderSlug,
     });
@@ -256,7 +267,7 @@ export class SharebiteClient {
 
   async getUserProfile(): Promise<{ id: number; preferred_phone_num: string }> {
     const raw = await this.fetchJson(
-      `/api/v1/users/login_status?timezone=America/Los_Angeles`,
+      `/api/v1/users/login_status?timezone=${encodeURIComponent(this.timezone)}`,
     );
     const parsed = LoginStatusResponseSchema.parse(raw);
     const phone = parsed.user.preferred_phone_num;
@@ -412,7 +423,7 @@ export class SharebiteClient {
       group_order_slug: args.group_order_slug,
       catering_host_details: {},
       credits: 0,
-      timezone: 'America/Los_Angeles',
+      timezone: this.timezone,
       service_fee: args.service_fee,
       administrative_fee: args.administrative_fee,
       skip_utensils: true,
