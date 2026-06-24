@@ -1,0 +1,28 @@
+{
+  "info": {
+    "_postman_id": "c23605cf-4e14-4f6b-9132-2771bc48f78c",
+    "name": "simple-rest-api/api-service",
+    "description": "This collection was auto-generated via the API Catalog Onboarding process.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "GET /users",
+      "id": "939df050-08ec-4dc0-9767-b43243ccbd77",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/users",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "users"
+          ]
+        }
+      },
+      "response": []
+    }
+  ]
+}
