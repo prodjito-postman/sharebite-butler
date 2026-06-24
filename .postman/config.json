@@ -4,8 +4,7 @@
   },
   "entities": {
     "collections": [
-      "../postman/collections/Simple REST API_55007680-580964de-ccd1-4a6a-8181-c8ef8e669b0d.postman_collection.json",
-      "../postman/collections/simple-rest-api-api-service_55007680-c23605cf-4e14-4f6b-9132-2771bc48f78c.postman_collection.json"
+      "../postman/collections/Simple REST API_55007680-580964de-ccd1-4a6a-8181-c8ef8e669b0d.postman_collection.json"
     ],
     "environments": [
       "../postman/environments/Test_55007680-bf00638d-824a-4380-a42d-54410dc8e7ec.postman_environment.json"
